@@ -11,30 +11,30 @@ CMD_START   equ 082h            ; адрес начала командной с�
 SYMBOL      equ 03h             ; символ
 
 
-            call SetVideoMemoryStart
-            call SetPhrasePlace
-            call SetPhraseLength
-            call SetSymbol
-            call SetCmdStartParam
+            call   SetVideoMemoryStart
+            call   SetPhrasePlace
+            call   SetPhraseLength
+            call   SetSymbol
+            call   SetCmdStartParam
 
-            call PrintPhrase
+            call   PrintPhrase
 
-            call SetUpperRowParams
-            call PrintUpperRow
+            call   SetUpperRowParams
+            call   PrintUpperRow
 
-            call SetLeftColumnParams
-            call PrintLeftColumn
+            call   SetLeftColumnParams
+            call   PrintLeftColumn
 
-            call SetRightColumnParams
-            call PrintRightColumn
+            call   SetRightColumnParams
+            call   PrintRightColumn
 
-            call SetLowerRowParams
-            call PrintLowerRow
+            call   SetLowerRowParams
+            call   PrintLowerRow
 
-            call PrintLeftEar
-            call PrintRightEar
+            call   PrintLeftEar
+            call   PrintRightEar
 
-            call Exit
+            call   Exit
 
 
 SetVideoMemoryStart     proc
@@ -86,8 +86,10 @@ PrintPhrase             proc
 
 SetUpperRowParams       proc
 
-                        mov di, 160d * 8 + 40d          ; кладём в di адрес левого верхнего угла
-                        mov cx, 34d                     ; кладём в cx длину рамки
+                        pop bx
+                        push 34d                         ; кладём в стек длину рамки
+                        push 160d * 8 + 40d              ; кладём в стек адрес верхнего левого угла
+                        push bx
 
                         ret
 
@@ -113,6 +115,13 @@ SetLowerRowParams       proc
                         ret
 
 PrintUpperRow           proc
+
+                        pop bx
+
+                        pop di
+                        pop cx
+
+                        push bx
 
                         UpperRow:
                             mov al, SYMBOL
