@@ -100,8 +100,12 @@ SetUpperRowParams       proc
 
 SetLeftColumnParams     proc
 
-                        mov di, 160d * 5 + 40d          ; кладём в di адрес левого верхнего угла
-                        mov cx, 7h                      ; кладём в сх ширину рамки
+                        pop bx              ; сохраняем адрес возврата
+
+                        push 160d * 5 + 40d ; кладём в стек аргументы(прямой порядок)
+                        push 7h             ;
+
+                        push bx             ; возвращаем адрес возврата в стек
 
                         ret
 
@@ -136,6 +140,13 @@ PrintUpperRow           proc
                         ret
 
 PrintLeftColumn         proc
+
+                        pop bx                              ; кладем адрес возврата в стек
+
+                        pop cx                              ; достаём аргументы
+                        pop di                              ;
+
+                        push bx                             ; возвращаем адрес возврата в стек
 
                         LeftColumn:
                             mov al, SYMBOL
