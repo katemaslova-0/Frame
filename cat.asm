@@ -22,6 +22,9 @@ SYMBOL      equ 03h             ; символ
             call   SetUpperRowParams
             call   PrintUpperRow
 
+            pop bx  ; очистка стека от аргументов
+            pop bx  ;
+
             call   SetLeftColumnParams
             call   PrintLeftColumn
 
@@ -86,10 +89,12 @@ PrintPhrase             proc
 
 SetUpperRowParams       proc
 
-                        pop bx
+                        pop bx                           ; сохраняем адрес возврата
+
                         push 34d                         ; кладём в стек длину рамки
                         push 160d * 8 + 40d              ; кладём в стек адрес верхнего левого угла
-                        push bx
+
+                        push bx                          ; возвращаем адрес возврата в стек
 
                         ret
 
@@ -116,12 +121,9 @@ SetLowerRowParams       proc
 
 PrintUpperRow           proc
 
-                        pop bx
-
-                        pop di
-                        pop cx
-
-                        push bx
+                        mov bp, sp
+                        mov di, [bp+02h]
+                        mov cx, [bp+04h]
 
                         UpperRow:
                             mov al, SYMBOL
