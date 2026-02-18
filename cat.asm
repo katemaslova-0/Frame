@@ -12,29 +12,37 @@ FRAME_X_LEN  equ ds:[82h]                           ; длина рамки
 FRAME_Y_LEN  equ ds:[85h]                           ; ширина рамки
 
 EAR          equ ds:[88h]                           ;
-PHRASE_START equ 08Ah                               ; адрес начала фразы в оперативной памяти
-SYMBOL       equ 03h                                ; символ
+SYMBOL_START equ ds:[8Ah]                           ;
+PHRASE_START equ 08Dh                               ; адрес начала фразы в оперативной памяти
 EXIT_CALL    equ 4c00h
 
 
         call   SetVideoMemoryStart
         call   SetPhrasePlace
         call   SetPhraseLength
-        call   SetSymbol
+        call   SetColor
         call   SetCmdStartParam
 
         call   PrintPhrase
 
-        mov al, SYMBOL
+        mov si, SYMBOL_START
+        call   CalculateHexLen
+        mov symbol, si
+
+        mov ax, symbol
 
         call   CalculateEarSize
 
         mov si, FRAME_X_LEN         ; кладём в si длину рамки(d)
         call   CalculateHexLen
+        shr si, 1
+        shl si, 1
         mov x_hex_len, si
 
         mov si, FRAME_Y_LEN
         call   CalculateHexLen      ; кладём в si ширину рамки(d)
+        shr si, 1
+        shl si, 1
         mov y_hex_len, si
 
         call   SetUpperRowParams
@@ -60,9 +68,23 @@ EXIT_CALL    equ 4c00h
 x_hex_len   dw ?
 y_hex_len   dw ?
 ear_size    dw ?
+symbol      dw ?
 
 lu_corner   dw ?
 ru_corner   dw ?
+
+
+;=================================================
+; CalculateEarSize
+;
+; Calculates ear size and puts it to the ear_size
+; variable
+;
+; Expected: -
+; Exit:     ear_size
+; Destroys: DX
+;
+;=================================================
 
 CalculateEarSize    proc
 
@@ -76,6 +98,18 @@ CalculateEarSize    proc
                     push bx
                     ret
 
+
+;=================================================
+; CalculateHexLen
+;
+; Translates decimal number in SI to hex(and makes
+; it even if it's not)
+;
+; Expected: decimal number in SI(as symbols)
+; Exit:     SI
+; Destroys: -
+;
+;=================================================
 
 CalculateHexLen     proc
 
@@ -99,9 +133,6 @@ CalculateHexLen     proc
                     pop ax
                     pop dx
                     pop cx                      ; в si лежит длина рамки(h)
-
-                    shr si, 1                   ; чётность
-                    shl si, 1
 
                     push bx
                     ret
@@ -141,7 +172,7 @@ SetPhrasePlace          proc
 
                         xor ax, ax                  ; зануляем ax
                         mov al, CMD_LEN             ; кладём длину командной строки в al
-                        sub al, 9h                  ; уменьшаем длину с учетом наличия других аргументов
+                        sub ax, 000Ch               ; уменьшаем длину с учетом наличия других аргументов
                         shr ax, 1                   ;
                         shl ax, 1                   ; если ax нечётно, то делаем чётным
                         mov di, 160d * 10 + 80d     ; сдвиг на середину экрана
@@ -150,7 +181,7 @@ SetPhrasePlace          proc
                         ret
 
 ;==================================================
-; SetSymbol
+; SetColor
 ;
 ; Puts symbol color to AH
 ;
@@ -160,7 +191,7 @@ SetPhrasePlace          proc
 ;
 ;==================================================
 
-SetSymbol               proc
+SetColor                proc
 
                         mov ah, COLOR               ; кладём атрибут символа в ah
 
@@ -180,7 +211,7 @@ SetSymbol               proc
 SetPhraseLength         proc
 
                         mov cl, CMD_LEN             ; кладём длину командной строки в cl
-                        sub cl, 9h
+                        sub cx, 000Ch
 
                         ret
 
@@ -209,7 +240,7 @@ SetCmdStartParam        proc
 ; Expected:     phrase start offset in DI
 ;               phrase length in CX
 ;               symbol atribute in AH
-; Exit:
+; Exit:         printed phrase
 ; Destroys:     AL
 ;
 ;==================================================
@@ -231,7 +262,7 @@ PrintPhrase             proc
 ;
 ; Expected:     symbol atribute in AH
 ; Exit:         args pushed in stack in reverse order
-; Destroys:     BX, SI, DL
+; Destroys:     SI, DX
 ;
 ;==================================================
 
@@ -272,10 +303,9 @@ SetUpperRowParams       proc
 ; Puts arguments for printing left column to stack
 ; in direct order
 ;
-; Expected:     00 in DH
-;               EAR_SIZE * 2 in DL
+; Expected:     -
 ; Exit:         args pushed in stack in direct order
-; Destroys:     BX, SI, DL
+; Destroys:     CX, SI
 ;
 ;==================================================
 
@@ -314,14 +344,12 @@ SetLeftColumnParams     proc
 ;==================================================
 ; SetRightColumnParams
 ;
-; Puts arguments for printing right column to DI
-; and CX
+; Puts arguments for printing left column to stack
+; in direct order
 ;
-; Expected:     left upper corner offset in SI
-;               00 in DH
-;
-; Exit:         DI, CX
-; Destroys:     SI
+; Expected:     -
+; Exit:         args pushed in stack in direct order
+; Destroys:     CX, SI
 ;
 ;==================================================
 
@@ -395,7 +423,6 @@ SetLowerRowParams       proc
 ; Expected:     ES offset(where row starts) in [SP + 02h]
 ;               row lentgh in [SP + 04h]
 ;               symbol code in AL
-;               EAR_SIZE in dx
 ; Exit:         printed row
 ; Destroys:     DI, CX, BP
 ;
@@ -425,7 +452,7 @@ PrintUpperRow           proc
 ;               row lentgh in [SP + 04h]
 ;               symbol code in AL
 ; Exit:         printed left column
-; Destroys:     DI, CX, BX, BP
+; Destroys:     DI, CX, BP
 ;
 ;==================================================
 
@@ -451,8 +478,8 @@ PrintLeftColumn         proc
 ;
 ; Prints right column of frame
 ;
-; Expected:     ES offset(where the row starts) in DI
-;               row lentgh in CX
+; Expected:     ES offset(where the row starts) in [SP + 02h]
+;               row lentgh in [SP + 04h]
 ;               symbol code in AL
 ; Exit:         printed right column
 ; Destroys:     DI, CX
@@ -506,9 +533,9 @@ PrintLowerRow           proc
 ;
 ; Prints left ear
 ;
-; Expected:     EAR_SIZE in dx (fix!)
+; Expected:     -
 ; Exit:         printed left ear
-; Destroys:     DI, CX, SI
+; Destroys:     DI, CX
 ;
 ;==================================================
 
@@ -531,8 +558,7 @@ PrintLeftEar            proc
 ;
 ; Prints right ear
 ;
-; Expected:     EAR_SIZE in dx (fix!)
-;               left ear start offset in si(fix!)
+; Expected:     -
 ; Exit:         printed right ear
 ; Destroys:     DI, CX, SI
 ;
