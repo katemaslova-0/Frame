@@ -5,53 +5,143 @@ org 100h
 
 Start:
 
-COLOR       equ 0bdh            ; цвет
-LEN         equ ds:[80h]        ; длина командной строки
-CMD_START   equ 082h            ; адрес начала командной строки
-SYMBOL      equ 03h             ; символ
+COLOR        equ 0bdh                               ; цвет
+START_MEMORY equ 0b800h
+CMD_LEN      equ ds:[80h]                           ; длина командной строки
+FRAME_X_LEN  equ ds:[82h]                           ; длина рамки
+FRAME_Y_LEN  equ ds:[85h]                           ; ширина рамки
+
+EAR          equ ds:[88h]                           ;
+PHRASE_START equ 08Ah                               ; адрес начала фразы в оперативной памяти
+SYMBOL       equ 03h                                ; символ
+EXIT_CALL    equ 4c00h
 
 
-            call   SetVideoMemoryStart
-            call   SetPhrasePlace
-            call   SetPhraseLength
-            call   SetSymbol
-            call   SetCmdStartParam
+        call   SetVideoMemoryStart
+        call   SetPhrasePlace
+        call   SetPhraseLength
+        call   SetSymbol
+        call   SetCmdStartParam
 
-            call   PrintPhrase
+        call   PrintPhrase
 
-            call   SetUpperRowParams
-            call   PrintUpperRow
+        mov al, SYMBOL
 
-            pop bx  ; очистка стека от аргументов
-            pop bx  ;
+        call   CalculateEarSize
 
-            call   SetLeftColumnParams
-            call   PrintLeftColumn
+        mov si, FRAME_X_LEN         ; кладём в si длину рамки(d)
+        call   CalculateHexLen
+        mov x_hex_len, si
 
-            call   SetRightColumnParams
-            call   PrintRightColumn
+        mov si, FRAME_Y_LEN
+        call   CalculateHexLen      ; кладём в si ширину рамки(d)
+        mov y_hex_len, si
 
-            call   SetLowerRowParams
-            call   PrintLowerRow
+        call   SetUpperRowParams
+        call   PrintUpperRow
 
-            call   PrintLeftEar
-            call   PrintRightEar
+        pop bx                      ; очистка стека от аргументов
+        pop bx
 
-            call   Exit
+        call   SetLeftColumnParams
+        call   PrintLeftColumn
 
+        call   SetRightColumnParams
+        call   PrintRightColumn
+
+        call   SetLowerRowParams
+        call   PrintLowerRow
+
+        call   PrintLeftEar
+        call   PrintRightEar
+
+        call   Exit
+
+x_hex_len   dw ?
+y_hex_len   dw ?
+ear_size    dw ?
+
+lu_corner   dw ?
+ru_corner   dw ?
+
+CalculateEarSize    proc
+
+                    pop bx                      ; сохраняем адрес возврата
+
+                    xor dx, dx
+                    mov dl, EAR
+                    sub dl, '0'
+                    mov ear_size, dx
+
+                    push bx
+                    ret
+
+
+CalculateHexLen     proc
+
+                    pop bx                      ; сохраняем адрес возврата
+
+                    push cx
+                    push dx
+                    push ax
+
+                    xor ax, ax
+                    sub si, '0'                 ;
+                    sub si, 3000h
+                    mov ax, si
+                    shl ax, 8
+                    shr ax, 8
+                    mov cx, 10d
+                    mul cx
+                    shr si, 8
+                    add si, ax
+
+                    pop ax
+                    pop dx
+                    pop cx                      ; в si лежит длина рамки(h)
+
+                    shr si, 1                   ; чётность
+                    shl si, 1
+
+                    push bx
+                    ret
+
+
+;=================================================
+; SetVideoMemoryStart
+;
+; Puts start video memory address to ES
+;
+; Expected:     -
+; Exit:         ES
+; Destroys:     AX
+;
+;=================================================
 
 SetVideoMemoryStart     proc
 
-                        mov ax, 0b800h              ; загружаем в es адрес начала видеопамяти
+                        mov ax, START_MEMORY        ; загружаем в es адрес начала видеопамяти
                         mov es, ax                  ;
 
                         ret
 
+;==================================================
+; SetPhrasePlace
+;
+; Counts where the start of line should be placed
+; and puts the result to DI
+;
+; Expected:     -
+; Exit:         DI
+; Destroys:     AX
+;
+;==================================================
+
 SetPhrasePlace          proc
 
                         xor ax, ax                  ; зануляем ax
-                        mov al, LEN                 ; кладём длину командной строки в al
-                        dec al                      ; уменьшаем длину(не считаем первый пробел)
+                        mov al, CMD_LEN             ; кладём длину командной строки в al
+                        sub al, 9h                  ; уменьшаем длину с учетом наличия других аргументов
                         shr ax, 1                   ;
                         shl ax, 1                   ; если ax нечётно, то делаем чётным
                         mov di, 160d * 10 + 80d     ; сдвиг на середину экрана
@@ -59,24 +149,70 @@ SetPhrasePlace          proc
 
                         ret
 
+;==================================================
+; SetSymbol
+;
+; Puts symbol color to AH
+;
+; Expected:     -
+; Exit:         AH
+; Destroys:     -
+;
+;==================================================
+
 SetSymbol               proc
 
                         mov ah, COLOR               ; кладём атрибут символа в ah
 
                         ret
 
+;==================================================
+; SetPhraseLength
+;
+; Calculates command line length and puts it to CL
+;
+; Expected:     -
+; Exit:         CL
+; Destroys:     -
+;
+;==================================================
+
 SetPhraseLength         proc
 
-                        mov cl, LEN                 ; кладём длину командной строки в cl
-                        dec cl                      ; уменьшаем длину(не считаем первый пробел)
+                        mov cl, CMD_LEN             ; кладём длину командной строки в cl
+                        sub cl, 9h
 
                         ret
+
+;==================================================
+; SetCmdStartParam
+;
+; Puts phrase offset to SI
+;
+; Expected:     -
+; Exit:         SI
+; Destroys:     -
+;
+;==================================================
 
 SetCmdStartParam        proc
 
-                        mov si, CMD_START           ; кладём адрес начала командной строки в si
+                        mov si, PHRASE_START        ; кладём адрес начала командной строки в si
 
                         ret
+
+;==================================================
+; PrintPhrase
+;
+; Prints phrase from command line
+;
+; Expected:     phrase start offset in DI
+;               phrase length in CX
+;               symbol atribute in AH
+; Exit:
+; Destroys:     AL
+;
+;==================================================
 
 PrintPhrase             proc
 
@@ -87,61 +223,215 @@ PrintPhrase             proc
 
                         ret
 
+;==================================================
+; SetUpperRowParams
+;
+; Puts arguments for printing upper row to stack
+; in reverse order
+;
+; Expected:     symbol atribute in AH
+; Exit:         args pushed in stack in reverse order
+; Destroys:     BX, SI, DL
+;
+;==================================================
+
 SetUpperRowParams       proc
 
-                        pop bx                           ; сохраняем адрес возврата
+                        pop bx                      ; сохраняем адрес возврата
 
-                        push 34d                         ; кладём в стек длину рамки
-                        push 160d * 8 + 40d              ; кладём в стек адрес верхнего левого угла
+                        mov si, x_hex_len           ; si = FRAME_X_LEN(h)
 
-                        push bx                          ; возвращаем адрес возврата в стек
+                        mov dx, ear_size
+                        shl dx, 1                   ; dx = EAR_SIZE * 2
+
+                        sub si, dx                  ; si = FRAME_X_LEN(h) - EAR_SIZE * 2
+                        inc si
+                        push si                     ; кладём в стек длину рамки(для верха - с учетом ушей)
+                        dec si
+
+                        shl si, 1                   ; si = (FRAME_X_LEN(h) - EAR_SIZE * 2) * 2
+
+                        push ax
+                        mov ax, 160d                ; ax = 160d
+                        sub ax, si                  ; ax = 160d - si
+                        mov si, ax                  ; si = 160d - (FRAME_X_LEN(h) - EAR_SIZE * 2)*2
+                        pop ax
+
+                        shr si, 2                   ; если нечетное число при делении на 2, делаем четным
+                        shl si, 1                   ; si = (160d - (FRAME_X_LEN(h) - EAR_SIZE * 2)*2) / 2
+                        add si, 160d * 8            ; si = 160d * 8 + (160d - (FRAME_X_LEN(h) - EAR_SIZE * 2)*2) / 2
+
+                        push si                     ; кладём в стек адрес верхнего левого угла
+                        push bx                     ; возвращаем адрес возврата в стек
 
                         ret
+
+;==================================================
+; SetLeftColumnParams
+;
+; Puts arguments for printing left column to stack
+; in direct order
+;
+; Expected:     00 in DH
+;               EAR_SIZE * 2 in DL
+; Exit:         args pushed in stack in direct order
+; Destroys:     BX, SI, DL
+;
+;==================================================
 
 SetLeftColumnParams     proc
 
-                        pop bx              ; сохраняем адрес возврата
+                        pop bx                              ; сохраняем адрес возврата
 
-                        push 160d * 5 + 40d ; кладём в стек аргументы(прямой порядок)
-                        push 7h             ;
+                        mov cx, 8d                          ; cx = 8d
+                        sub cx, ear_size                    ; cx = 8d - EAR_SIZE
 
-                        push bx             ; возвращаем адрес возврата в стек
+                        push ax                             ;
+                        mov ax, 160d                        ; ax = 160d
+                        push dx
+                        mul cx
+                        pop dx
+                        mov cx, ax                          ; cx = 160d * (8d - EAR_SIZE)
+                        mov ax, 160d                        ; ax = 160d
+
+                        mov si, x_hex_len                   ; si = FRAME_X_LENGTH(H)
+                        shl si, 1                           ; si = FRAME_X_LENGTH(H)*2
+                        sub ax, si                          ; ax = 160d - FRAME_X_LENGTH(H)*2
+                        shl ax, 1
+                        shr ax, 2                           ; ax = (160d - FRAME_X_LENGTH(H)*2) / 2
+                        add cx, ax                          ; cx = 160d * (8d - EAR_SIZE) + (160d - FRAME_X_LENGTH(H)*2) / 2
+                        pop ax
+
+                        mov lu_corner, cx                   ; сохраняем адрес верхнего левого угла
+                        push cx                             ; кладём в стек аргументы(прямой порядок) - адрес верхнего левого угла
+
+                        push y_hex_len                      ; кладём в стек длину рамки
+
+                        push bx                             ; возвращаем адрес возврата в стек
 
                         ret
+
+;==================================================
+; SetRightColumnParams
+;
+; Puts arguments for printing right column to DI
+; and CX
+;
+; Expected:     left upper corner offset in SI
+;               00 in DH
+;
+; Exit:         DI, CX
+; Destroys:     SI
+;
+;==================================================
 
 SetRightColumnParams    proc
 
-                        mov di, 160d * 5 + 120d - 2     ; кладём в di адрес правого верхнего угла
-                        mov cx, 7h                      ; кладём в сх ширину рамки
+                        pop bx                              ; сохраняем адрес возврата
+
+                        mov cx, 8d                          ; cx = 8d
+                        mov dx, ear_size                    ; dx = ear_size
+                        sub cx, dx                          ; cx = 8d - EAR_SIZE
+
+                        push ax                             ;
+                        mov ax, 160d                        ; ax = 160d
+                        push dx
+                        mul cx
+                        pop dx
+                        mov cx, ax                          ; cx = 160d * (8d - EAR_SIZE)
+                        mov ax, 80d                         ; ax = 80d
+                        mov si, x_hex_len                   ; si = FRAME_X_LENGTH(H)
+                        add ax, si                          ; ax = 80d + FRAME_X_LENGTH(H)
+                        shl ax, 1
+                        shr ax, 1
+                        add cx, ax                          ; cx = 160d * (8d - EAR_SIZE) + 80d + FRAME_X_LENGTH(H)
+                        pop ax
+
+                        mov ru_corner, cx                   ; сохраняем адрес верхнего левого угла
+                        push cx                             ; кладём в стек аргументы(прямой порядок) - адрес верхнего левого угла
+
+                        push y_hex_len                      ; кладём в стек длину рамки
+
+                        push bx                             ; возвращаем адрес возврата в стек
 
                         ret
+
+;==================================================
+; SetLowerRowParams
+;
+; Puts arguments for printing lower row to DI
+; and CX
+;
+; Expected:     -
+; Exit:         DI, CX
+; Destroys:     -
+;
+;==================================================
 
 SetLowerRowParams       proc
 
-                        mov di, 160d * 12 + 40d         ; кладём в di адрес левого нижнего угла
-                        mov cx, 40d                     ; кладём в cx длину рамки
+                        push ax
+                        push dx
+                        mov ax, 160d                ; ax = 160d
+                        mov cx, y_hex_len           ; cx = y_hex_len
+                        mul cx
+                        mov cx, ax                  ; cx = 160d * y_hex_len
+                        pop dx
+                        pop ax
+
+                        add cx, lu_corner
+
+                        mov di, cx
+                        mov cx, x_hex_len           ; cx = FRAME_X_LENGTH(H)
+                        inc cx
 
                         ret
+
+;==================================================
+; PrintUpperRow
+;
+; Prints upper row of frame
+;
+; Expected:     ES offset(where row starts) in [SP + 02h]
+;               row lentgh in [SP + 04h]
+;               symbol code in AL
+;               EAR_SIZE in dx
+; Exit:         printed row
+; Destroys:     DI, CX, BP
+;
+;==================================================
 
 PrintUpperRow           proc
 
                         mov bp, sp
-                        mov di, [bp+02h]
-                        mov cx, [bp+04h]
+                        mov di, [bp + 02h]
+                        mov cx, [bp + 04h]
 
                         UpperRow:
-                            mov al, SYMBOL
-                            mov byte ptr es:[di+06h], al    ; загружаем нужный символ в es:[di]
-                            mov byte ptr es:[di+07h], COLOR ; загружаем атрибут символа в соседний байт
-                            inc di                          ; дважды инкрементируем di
-                            inc di                          ;
+                            mov byte ptr es:[di], al             ; загружаем нужный символ в es:[di]
+                            mov byte ptr es:[di + 1h], COLOR     ; загружаем атрибут символа в соседний байт
+                            inc di                               ; дважды инкрементируем di
+                            inc di                               ;
                         loop UpperRow
 
                         ret
 
+;==================================================
+; PrintLeftColumn
+;
+; Prints left column of frame
+;
+; Expected:     ES offset(where the row starts) in [SP + 02h]
+;               row lentgh in [SP + 04h]
+;               symbol code in AL
+; Exit:         printed left column
+; Destroys:     DI, CX, BX, BP
+;
+;==================================================
+
 PrintLeftColumn         proc
 
-                        pop bx                              ; кладем адрес возврата в стек
+                        pop bx                              ; достаём адрес возврата из стека
 
                         pop cx                              ; достаём аргументы
                         pop di                              ;
@@ -149,7 +439,6 @@ PrintLeftColumn         proc
                         push bx                             ; возвращаем адрес возврата в стек
 
                         LeftColumn:
-                            mov al, SYMBOL
                             mov byte ptr es:[di], al        ; загружаем нужный символ в es:[di]
                             mov byte ptr es:[di+01h], COLOR ; загружаем атрибут символа в соседний байт
                             add di, 160d                    ; увеличиваем di на 160d (переход на следующую строку)
@@ -157,10 +446,29 @@ PrintLeftColumn         proc
 
                         ret
 
+;==================================================
+; PrintRightColumn
+;
+; Prints right column of frame
+;
+; Expected:     ES offset(where the row starts) in DI
+;               row lentgh in CX
+;               symbol code in AL
+; Exit:         printed right column
+; Destroys:     DI, CX
+;
+;==================================================
+
 PrintRightColumn        proc
 
+                        pop bx
+
+                        pop cx
+                        pop di
+
+                        push bx
+
                         RightColumn:
-                            mov al, SYMBOL
                             mov byte ptr es:[di], al        ; загружаем нужный символ в es:[di]
                             mov byte ptr es:[di+01h], COLOR ; загружаем атрибут символа в соседний байт
                             add di, 160d                    ; увеличиваем di на 160d (переход на следующую строку)
@@ -168,51 +476,96 @@ PrintRightColumn        proc
 
                         ret
 
+;==================================================
+; PrintLowerRow
+;
+; Prints lower row of frame
+;
+; Expected:     ES offset(where the row starts) in DI
+;               row lentgh in CX
+;               symbol code in AL
+; Exit:         printed lower row
+; Destroys:     DI, CX
+;
+;==================================================
+
 PrintLowerRow           proc
 
                         LowerRow:
-                            mov al, SYMBOL
                             mov byte ptr es:[di], al        ; загружаем нужный символ в es:[di]
                             mov byte ptr es:[di+01h], COLOR ; загружаем атрибут символа в соседний байт
                             inc di                          ; дважды инкрементируем di
                             inc di                          ;
                         loop LowerRow
 
+
                         ret
+
+;==================================================
+; PrintLeftEar
+;
+; Prints left ear
+;
+; Expected:     EAR_SIZE in dx (fix!)
+; Exit:         printed left ear
+; Destroys:     DI, CX, SI
+;
+;==================================================
 
 PrintLeftEar            proc
 
-                        mov di, 160d * 6 + 40d + 2d     ; дорисовать левый край
-                        mov al, SYMBOL
-                        mov byte ptr es:[di], al
-                        mov byte ptr es:[di+01h], COLOR ; stosw - переделать
 
-                        mov di, 160d * 7 + 40d + 4d
-                        mov al, SYMBOL
-                        mov byte ptr es:[di], al
-                        mov byte ptr es:[di+01h], COLOR
+                        mov di, lu_corner
+                        mov cx, ear_size
+
+                        LeftEar:
+                            mov byte ptr es:[di], al
+                            mov byte ptr es:[di+01h], COLOR
+                            add di, 160d + 2d
+                        loop LeftEar
 
                         ret
+
+;==================================================
+; PrintRightEar
+;
+; Prints right ear
+;
+; Expected:     EAR_SIZE in dx (fix!)
+;               left ear start offset in si(fix!)
+; Exit:         printed right ear
+; Destroys:     DI, CX, SI
+;
+;==================================================
 
 PrintRightEar           proc
 
-                        mov di, 160d * 6 + 120d - 4d     ; дорисовать правый край
-                        mov al, SYMBOL
-                        mov byte ptr es:[di], al
-                        mov byte ptr es:[di+01h], COLOR
+                        mov di, ru_corner
+                        mov cx, ear_size
 
-                        mov di, 160d * 7 + 120d - 6d
-                        mov al, SYMBOL
-                        mov byte ptr es:[di], al
-                        mov byte ptr es:[di+01h], COLOR
+                        RightEar:
+                            mov byte ptr es:[di], al
+                            mov byte ptr es:[di+01h], COLOR
+                            add di, 160d - 2d
+                        loop RightEar
 
                         ret
+
+;==================================================
+; Exit
+;
+; Finishes the programm
+;
+; Expected:     -
+; Exit:         end of the programm
+; Destroys:     AX
+;
+;==================================================
 
 Exit                    proc
 
-                        mov ax, 4c00h       ; завершение программы
+                        mov ax, EXIT_CALL   ; завершение программы
                         int 21h             ;
 
                         ret
-
 end         Start
