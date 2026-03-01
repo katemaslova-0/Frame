@@ -39,10 +39,14 @@ KeyboardInt proc
             pushf
             push ax bx es
 
+            mov ah, al
+
             in al, 60h
             and al, not 80h
+
             cmp al, 67d
-            jne NO_FRAME
+            jne NO_SIXSEVEN
+            mov flag, 1
 
             pushf
             push ax bx dx si di bp
@@ -50,8 +54,14 @@ KeyboardInt proc
             pop bp di si dx bx ax
             popf
 
-NO_FRAME:
-            push 0b800h                     ; начало видеопамяти кладём в es
+            jmp DEFAULT
+
+NO_SIXSEVEN:
+            cmp al, 68d
+            jne DEFAULT
+            mov flag, 0
+
+DEFAULT:    push 0b800h                     ; начало видеопамяти кладём в es
             pop es                          ;
             mov bx, (80d * 5 + 40d) * 2     ; в bx - середину 5й строки
             mov ah, 4eh                     ; в аh - атрибут символа
@@ -93,14 +103,13 @@ TimerInt    proc
 
             push ax cx dx si di bp ds es ss cs
 
-            in al, 60h
-            and al, not 80h
-            cmp al, 67d
-            jne NO_UPD
+            mov al, flag
+            cmp al, 1d
+            jne NO_FRAME
 
             call Frame
 
-NO_UPD:
+NO_FRAME:
             pop bx                          ; bx = cs_prev
             pop bx                          ; bx = ss_prev
             pop es ds bp di si dx cx ax
@@ -719,6 +728,8 @@ PrintRightEar           proc
                         ret
                         endp
 
+flag    db 0
+
 EOP:
 Main:
             mov ax, 3509h                   ;
@@ -744,7 +755,7 @@ Main:
             mov bx, es                      ;
             mov OldTimerOff, bx             ; сохраняем адрес старого обработчика(int 08h)
 
-            int 09h ; для отладки
+            ;int 09h ; для отладки
 
             push 0                          ;
             pop es                          ; es = 0
