@@ -46,7 +46,7 @@ KeyboardInt proc
 
             cmp al, 67d
             jne NO_SIXSEVEN
-            mov flag, 1
+            mov flag, 1h
 
             pushf
             push ax bx dx si di bp
@@ -58,8 +58,14 @@ KeyboardInt proc
 
 NO_SIXSEVEN:
             cmp al, 68d
+            jne NO_SIXEIGHT
+            mov flag, 0h
+            jmp DEFAULT
+
+NO_SIXEIGHT:
+            cmp al, 66d
             jne DEFAULT
-            mov flag, 0
+            mov flag, 10h
 
 DEFAULT:    push 0b800h                     ; начало видеопамяти кладём в es
             pop es                          ;
@@ -103,13 +109,21 @@ TimerInt    proc
 
             push ax cx dx si di bp ds es ss cs
 
-            mov al, flag
-            cmp al, 1d
+            mov ax, flag
+            cmp ax, 1h
             jne NO_FRAME
 
             call Frame
 
+            jmp NO_FRAME_CLOSING
+
 NO_FRAME:
+            cmp ax, 10h
+            jne NO_FRAME_CLOSING
+
+            call CloseFrame
+
+NO_FRAME_CLOSING:
             pop bx                          ; bx = cs_prev
             pop bx                          ; bx = ss_prev
             pop es ds bp di si dx cx ax
@@ -123,6 +137,38 @@ NO_FRAME:
             OldTimerSeg      dw 0
             OldTimerOff      dw 0
 
+            endp
+
+
+;=================================================
+; CloseFrame
+;
+; Closes frame
+;
+; Expected: background image in save_buffer
+; Exit: closed frame
+; Destroys: -
+;
+;=================================================
+
+CloseFrame  proc
+
+            push cx di es ax
+
+            push START_MEMORY
+            pop es                      ; es = START_MEMORY
+
+            mov cx, 2000d               ; cx = 2000d
+            xor di, di                  ; di = 0
+
+            OutputSym:
+                mov ax, cs:save_buffer[di]  ; ax = save_buffer[di]
+                stosw                       ; es:[di] = ax, di += 2
+            loop OutputSym
+
+            pop ax es di cx
+
+            ret
             endp
 
 ;=================================================
@@ -728,7 +774,42 @@ PrintRightEar           proc
                         ret
                         endp
 
-flag    db 0
+;===================================================
+; SaveBackground
+;
+; Puts background image to a buffer
+;
+; Expected: -
+; Exit: save_buffer
+; Destroys: -
+;
+;===================================================
+
+SaveBackground          proc
+
+                        push ax si es cx
+
+                        mov cx, 2000d            ; cx = 2000d
+                        push START_MEMORY
+                        pop es
+                        xor si, si               ; si = 0
+
+                        SaveWord:
+                            mov ax, es:[si]
+                            mov cs:save_buffer[si], ax
+                            add si, 2
+                        loop SaveWord
+
+                        pop cx es si ax
+
+                        ret
+                        endp
+
+
+flag    dw 0
+save_buffer dw 2000d DUP(0) ;
+draw_buffer dw 2000d DUP(0) ; not used for now
+regs_line   db 'ipbxaxcxdxsidibpspdsessscs$'
 
 EOP:
 Main:
@@ -767,6 +848,9 @@ Main:
             mov es:[bx+2], ax               ;
             sti                             ; записываем свой адрес(TimerInt) на место адреса
                                             ; старого обработчика
+
+            call SaveBackground             ;
+            ;int 08h ; для отладки!
 
             mov ax, 3100h                   ;
             mov dx, offset EOP              ; выделяем память для сохранения
