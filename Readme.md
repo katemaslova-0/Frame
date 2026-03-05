@@ -20,6 +20,23 @@ There's the picture you'll get using the parameters specified above.
 <img width="1074" height="802" alt="image" src="https://github.com/user-attachments/assets/9415459e-ecf2-44a9-966f-882dedf10ce3" />
 
 
+# Resident
+
+  A resident programm which draws a frame with constanly updating register values inside if you press 'W'. You can stop the values
+  update by pressing 'E' and close the frame with 'Q'.
+
+## Launch
+
+  There's no parameters for launching:
+
+  ```
+resident.com
+```
+  The programm will change the int 09h and int 08h addresses to its own functions' ones. Now you can try pressing 'W', 'Q' or 'E'.
+
+## Example
+
+<img width="986" height="963" alt="image" src="https://github.com/user-attachments/assets/2fcb77af-fd8c-4472-8ad4-53a0861308af" />
 
 
 
