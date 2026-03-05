@@ -3,21 +3,27 @@
 .code
 org 100h
 
-COLOR        equ 03dh               ; цвет кота
-EAR_COLOR    equ 030h               ; цвет ушей
-START_MEMORY equ 0b800h             ; начало видеопамяти
+COLOR        equ 03dh                               ; cat color
+EAR_COLOR    equ 030h                               ; ear color
+START_MEMORY equ 0b800h                             ; VRAM start
 EXIT_CALL    equ 4c00h
 
-x_hex_len    equ 20h
-y_hex_len    equ 14h
-ear_size     equ 04h
-symbol       equ 03h
+x_hex_len    equ 20h                                ; length of the frame
+y_hex_len    equ 14h                                ; width of the frame
+ear_size     equ 04h                                ; size of ears
+symbol       equ 03h                                ; sym color
 
-lu_corner    equ 02B0h
-ru_corner    equ 02F0h
-ll_corner    equ 0F30h
+lu_corner    equ 02B0h                              ; left upper corner address
+ru_corner    equ 02F0h                              ; right upper corner address
+ll_corner    equ 0F30h                              ; left lower corner address
+
+w_scancode   equ 17d
+q_scancode   equ 16d
+e_scancode   equ 18d
 
 SCREEN_LEN   equ 160d
+SCREEN_SIZE  equ 2000d
+NUM_OF_REGS  equ 13d
 
 Start:
     jmp Main
@@ -28,58 +34,46 @@ Start:
 ; My keyboard interrupt handler(instead of int 09h)
 ;
 ; Expected: -
-; Exit: usual int 09h if F9 isn't pressed
-;       draws a frame with regs if F9 is pressed
+; Exit: changes the flag for the timer int to
+;       indicate if one of 'q', 'w' or 'e' has
+;       been pressed
 ; Destroys: -
 ;
 ;=================================================
 
 KeyboardInt proc
 
-            pushf
-            push ax bx es
+            pushf                                   ; save flags
+            push ax bx es                           ; save ax, bx, es
 
-            mov ah, al
-
-            in al, 60h
+            in al, 60h                              ; put the last pressed sym scancode in al
             and al, not 80h
 
-            cmp al, 67d
-            jne NO_SIXSEVEN
-            mov flag, 1h
-
-            pushf
-            push ax bx dx si di bp
-            call Frame
-            pop bp di si dx bx ax
-            popf
+            cmp al, w_scancode
+            jne NO_W_PRESSED
+            mov flag, 01h                           ; if 'w' is pressed, flag = 01h
 
             jmp DEFAULT
 
-NO_SIXSEVEN:
-            cmp al, 68d
-            jne NO_SIXEIGHT
-            mov flag, 0h
+NO_W_PRESSED:
+            cmp al, q_scancode
+            jne NO_Q_PRESSED
+            mov flag, 10h                           ; if 'q' is pressed, flag = 10h
+
             jmp DEFAULT
 
-NO_SIXEIGHT:
-            cmp al, 66d
+NO_Q_PRESSED:
+            cmp al, e_scancode                      ; if 'e' is pressed, flag = 00h
             jne DEFAULT
-            mov flag, 10h
+            mov flag, 00h
 
-DEFAULT:    push 0b800h                     ; начало видеопамяти кладём в es
-            pop es                          ;
-            mov bx, (80d * 5 + 40d) * 2     ; в bx - середину 5й строки
-            mov ah, 4eh                     ; в аh - атрибут символа
-
-            mov es:[bx], ax                 ; для проверки выводим символ в середине 5й строки
-
+DEFAULT:
             pop es bx ax
-            popf                            ; восстанавливаем состояние системы
+            popf                                    ; restore system state
 
-            db 0eah
-            OldSeg      dw 0
-            OldOff      dw 0
+            db 0eah                                 ; = jmp far
+            OldSeg      dw 0                        ; (arg1)
+            OldOff      dw 0                        ; (arg2)
 
             endp
 
@@ -89,55 +83,97 @@ DEFAULT:    push 0b800h                     ; начало видеопамят�
 ; My timer interrupt handler(instead of int 08h)
 ;
 ; Expected: -
-; Exit: usual int 08h if F9 isn't pressed
-;       draws a frame with regs if F9 is pressed
+; Exit: usual int 08h if 'q', 'w', 'e' aren't pressed
+;       draws a frame with regs if 'w' is pressed
+;       stops frame updates if 'e' is pressed
+;       closes the frame if 'q' is pressed
 ; Destroys: -
 ;
 ;=================================================
 
 TimerInt    proc
 
-            pushf
-            push bx
+            pushf                                   ; save flags
+            push bx                                 ; save bx value
 
-            mov bx, bp
-            mov bp, sp
-            push [bp + 4h]
-            mov bp, bx
+            mov bx, bp                              ; bx = bp
+            mov bp, sp                              ; bp = sp
+            push [bp + 4h]                          ; save ip
+            mov bp, bx                              ; restore bp
 
-            push sp
+            push sp ax cx dx si di bp ds es ss cs
 
-            push ax cx dx si di bp ds es ss cs
+            mov ax, flag                            ; ax = flag
+            cmp ax, 01h
+            jne NO_FRAME                            ; if flag != 01h -> no frame
 
-            mov ax, flag
-            cmp ax, 1h
-            jne NO_FRAME
-
-            call Frame
+            call CompareBuffs                       ; else -> save background(in case of frame closing)
+            call Frame                              ; draw frame
 
             jmp NO_FRAME_CLOSING
 
 NO_FRAME:
             cmp ax, 10h
-            jne NO_FRAME_CLOSING
+            jne NO_FRAME_CLOSING                    ; if flag != 10h -> end
 
             call CloseFrame
+            mov flag, 00h                           ; no need to close the frame again next int 08h
 
 NO_FRAME_CLOSING:
-            pop bx                          ; bx = cs_prev
-            pop bx                          ; bx = ss_prev
-            pop es ds bp di si dx cx ax
-            pop bx                          ; bx = sp_prev
-            pop bx                          ; bx = ip_prev
-            pop bx                          ; bx = bx_prev
 
-            popf
+            add sp, 4                               ; remove cs and ss prev values
+            pop es ds bp di si dx cx ax             ; restore regs
+            add sp, 4                               ; remove ip and sp prev values
+            pop bx                                  ; bx = bx_prev
 
-            db 0eah
-            OldTimerSeg      dw 0
-            OldTimerOff      dw 0
+            popf                                    ; restore flags
+
+            db 0eah                                 ; = jmp far
+            OldTimerSeg      dw 0                   ; (arg1)
+            OldTimerOff      dw 0                   ; (arg2)
 
             endp
+
+;=================================================
+; CompareBuffs
+;
+; Compares draw_buffer with VRAM and changes
+; symbols in save_buffer if not equal
+;
+; Expected: frame image in draw_buffer
+;           background image in save_buffer
+; Exit:     updated save_buffer
+; Destroys: -
+;
+;=================================================
+
+CompareBuffs    proc
+
+                push ax bx es di cx                 ; save regs' values
+
+                push START_MEMORY
+                pop es                              ; es = START_MEMORY
+
+                mov cx, SCREEN_SIZE                 ; cx = 2000d
+                xor di, di                          ; di = 0
+
+                CmpWord:
+                    mov ax, es:[di]
+                    mov bx, cs:draw_buffer[di]
+                    cmp bx, ax
+                    je NEXT_LOOP
+
+                    mov cs:save_buffer[di], ax
+                    mov cs:draw_buffer[di], ax
+
+                NEXT_LOOP:
+                    add di, 2
+                loop CmpWord
+
+                pop cx di es bx ax
+
+                ret
+                endp
 
 
 ;=================================================
@@ -146,48 +182,50 @@ NO_FRAME_CLOSING:
 ; Closes frame
 ;
 ; Expected: background image in save_buffer
-; Exit: closed frame
+; Exit:     closed frame
 ; Destroys: -
 ;
 ;=================================================
 
-CloseFrame  proc
+CloseFrame      proc
 
-            push cx di es ax
+                push cx di es ax                    ; save regs' values
 
-            push START_MEMORY
-            pop es                      ; es = START_MEMORY
+                push START_MEMORY
+                pop es                              ; es = START_MEMORY
 
-            mov cx, 2000d               ; cx = 2000d
-            xor di, di                  ; di = 0
+                mov cx, SCREEN_SIZE                 ; cx = 2000d
+                xor di, di                          ; di = 0
 
-            OutputSym:
-                mov ax, cs:save_buffer[di]  ; ax = save_buffer[di]
-                stosw                       ; es:[di] = ax, di += 2
-            loop OutputSym
+                OutputSym:
+                    mov ax, cs:save_buffer[di]      ; ax = save_buffer[di]
+                    stosw                           ; es:[di] = ax, di += 2
+                loop OutputSym
 
-            pop ax es di cx
+                pop ax es di cx                     ; restore regs' values
 
-            ret
-            endp
+                ret
+                endp
 
 ;=================================================
 ; Frame
 ;
-; Draws frame and prints regs' values inside it
+; Draws frame with regs' values inside in VRAM
+; and draw_buffer
 ;
 ; Expected: -
-; Exit: frame with regs' values
-; Destroys: ?
+; Exit:     frame with regs' values in VRAM and
+;           draw_buffer
+; Destroys: AX, ES
 ;
 ;=================================================
 
 Frame       proc
 
             push START_MEMORY
-            pop es
+            pop es                                  ; es = START_MEMORY
 
-            mov ax, symbol
+            mov ax, symbol                          ; ax = symbol
 
             call   PrintUpperRow
             call   PrintLeftColumn
@@ -211,7 +249,7 @@ Frame       proc
 ;
 ; Prints regs' values inside the frame
 ;
-; Expected: -
+; Expected: regs' values in stack
 ; Exit: Regs' values
 ; Destroys: ?
 ;
@@ -219,141 +257,32 @@ Frame       proc
 
 PrintRegs   proc
 
-            mov bx, (80d * 10 + 37d) * 2
+            mov bx, (80d * 10 + 37d) * 2            ; put start address for printing regs to bx
             push START_MEMORY
-            pop es
-            mov ah, COLOR
-            mov dx, 28d     ; позиция в стеке, с которой начинаются сохраненные регистры
+            pop es                                  ; es = START_MEMORY
+            mov ah, COLOR                           ; ah = COLOR
+            mov dx, 28d                             ; position in stack from which reg values start
+            mov cx, NUM_OF_REGS                     ; num of regs
+            xor di, di                              ; di = 0
 
-            mov al, 'b'
-            mov es:[bx], ax
-            add bx, 2
-            mov al, 'x'
-            mov es:[bx], ax
-            add bx, 2
+            PrintOneReg:
+                mov al, cs:[regs_line + di]         ; mov first letter from the string to al
+                mov es:[bx], ax                     ; draw this letter in VRAM
+                mov cs:draw_buffer[bx], ax          ; draw this letter in draw_buffer
+                add bx, 2                           ; move to the next sym
+                inc di                              ; move to the next letter in string
+                mov al, cs:[regs_line + di]
+                mov es:[bx], ax
+                mov cs:draw_buffer[bx], ax
+                add bx, 2
+                inc di
 
-            call PrintEq
-            call PrintRegVal
+                push cx                             ; save the counter
+                call PrintEq                        ; print ' = '
+                call PrintRegVal                    ; print reg val
+                pop cx                              ; restore the counter
 
-            mov al, 'i'
-            mov es:[bx], ax
-            add bx, 2
-            mov al, 'p'
-            mov es:[bx], ax
-            add bx, 2
-
-            call PrintEq
-            call PrintRegVal
-
-            mov al, 's'
-            mov es:[bx], ax
-            add bx, 2
-            mov al, 'p'
-            mov es:[bx], ax
-            add bx, 2
-
-            call PrintEq
-            call PrintRegVal
-
-            mov al, 'a'
-            mov es:[bx], ax
-            add bx, 2
-            mov al, 'x'
-            mov es:[bx], ax
-            add bx, 2
-
-            call PrintEq
-            call PrintRegVal
-
-            mov al, 'c'
-            mov es:[bx], ax
-            add bx, 2
-            mov al, 'x'
-            mov es:[bx], ax
-            add bx, 2
-
-            call PrintEq
-            call PrintRegVal
-
-            mov al, 'd'
-            mov es:[bx], ax
-            add bx, 2
-            mov al, 'x'
-            mov es:[bx], ax
-            add bx, 2
-
-            call PrintEq
-            call PrintRegVal
-
-            mov al, 's'
-            mov es:[bx], ax
-            add bx, 2
-            mov al, 'i'
-            mov es:[bx], ax
-            add bx, 2
-
-            call PrintEq
-            call PrintRegVal
-
-            mov al, 'd'
-            mov es:[bx], ax
-            add bx, 2
-            mov al, 'i'
-            mov es:[bx], ax
-            add bx, 2
-
-            call PrintEq
-            call PrintRegVal
-
-            mov al, 'b'
-            mov es:[bx], ax
-            add bx, 2
-            mov al, 'p'
-            mov es:[bx], ax
-            add bx, 2
-
-            call PrintEq
-            call PrintRegVal
-
-            mov al, 'd'
-            mov es:[bx], ax
-            add bx, 2
-            mov al, 's'
-            mov es:[bx], ax
-            add bx, 2
-
-            call PrintEq
-            call PrintRegVal
-
-            mov al, 'e'
-            mov es:[bx], ax
-            add bx, 2
-            mov al, 's'
-            mov es:[bx], ax
-            add bx, 2
-
-            call PrintEq
-            call PrintRegVal
-
-            mov al, 's'
-            mov es:[bx], ax
-            add bx, 2
-            mov al, 's'
-            mov es:[bx], ax
-            add bx, 2
-
-            call PrintEq
-            call PrintRegVal
-
-            mov al, 'c'
-            mov es:[bx], ax
-            add bx, 2
-            mov al, 's'
-            mov es:[bx], ax
-            add bx, 2
-
-            call PrintEq
-            call PrintRegVal
+            loop PrintOneReg
 
             ret
             endp
@@ -363,7 +292,8 @@ PrintRegs   proc
 ;
 ; Prints ' = ' after the reg name
 ;
-; Expected: -
+; Expected: adress of the eq start in BX
+;           offset of the reg value
 ; Exit: ' = ' line
 ; Destroys: ?
 ;
@@ -371,21 +301,26 @@ PrintRegs   proc
 
 PrintEq     proc
 
-            mov al, ' '
-            mov es:[bx], ax
-            add bx, 2
-            mov al, '='
-            mov es:[bx], ax
-            add bx, 2
-            mov al, ' '
-            mov es:[bx], ax
+            mov al, ' '                             ; al = ' '
+            mov es:[bx], ax                         ; print space
+            mov cs:draw_buffer[bx], ax              ; both in VRAM and draw_buffer
             add bx, 2
 
-            mov bp, sp
-            add bp, dx
-            add bp, 2 ; с учетом наличия адреса возврата PrintEq
-            mov cx, [bp]
-            sub dx, 2 ; декрементируем для след аргумента
+            mov al, '='
+            mov es:[bx], ax
+            mov cs:draw_buffer[bx], ax
+            add bx, 2
+
+            mov al, ' '
+            mov es:[bx], ax
+            mov cs:draw_buffer[bx], ax
+            add bx, 2
+
+            mov bp, sp                              ; bp = sp
+            add bp, dx                              ; [bp] = reg_value
+            add bp, 4                               ; skip PrintEq return address and push cx
+            mov cx, [bp]                            ; cx = reg_value(to print after '= ')
+            sub dx, 2                               ; offset in stack for the next argument
 
             ret
             endp
@@ -395,20 +330,21 @@ PrintEq     proc
 ;
 ; Prints reg's value
 ;
-; Expected: -
-; Exit: reg's value
-; Destroys: ?
+; Expected: reg's value in CX
+; Exit: reg's value printed
+; Destroys: AX, BX
 ;
 ;=================================================
 
 PrintRegVal proc
 
-            push cx
-            shr cx, 3*4d
+            push cx                                 ; save cx value
+            shr cx, 3*4d                            ;
             call NumOrLet
 
             mov al, cl
             mov es:[bx], ax
+            mov cs:draw_buffer[bx], ax
             add bx, 2
             pop cx
 
@@ -419,6 +355,7 @@ PrintRegVal proc
 
             mov al, cl
             mov es:[bx], ax
+            mov cs:draw_buffer[bx], ax
             add bx, 2
             pop cx
 
@@ -429,6 +366,7 @@ PrintRegVal proc
 
             mov al, cl
             mov es:[bx], ax
+            mov cs:draw_buffer[bx], ax
             add bx, 2
             pop cx
 
@@ -438,6 +376,7 @@ PrintRegVal proc
 
             mov al, cl
             mov es:[bx], ax
+            mov cs:draw_buffer[bx], ax
             add bx, 2
             pop cx
 
@@ -482,36 +421,64 @@ NUM:
 
 ColorLeftEar        proc
 
-                    pop bx                              ; сохраняем адрес возврата
+                    pop bx                          ; save return address
 
-                    mov di, lu_corner                   ; di = lu_corner
-                    add di, SCREEN_LEN * 2 + 2          ; di = lu_corner + SCREEN_LEN * 2 + 2
+                    mov di, lu_corner               ; di = lu_corner
+                    add di, SCREEN_LEN * 2 + 2      ; di = lu_corner + SCREEN_LEN * 2 + 2
 
-                    mov cx, ear_size                    ; cx = ear_size
-                    dec cx                              ; cx = ear_size - 1
-                    xor dx, dx                          ; dx = 0
-                    inc dx                              ; dx = 1
+                    mov cx, ear_size                ; cx = ear_size
+                    dec cx                          ; cx = ear_size - 1
+                    xor dx, dx                      ; dx = 0
+                    inc dx                          ; dx = 1
 
-                    ColorLStairs:                       ; цикл для закрашивания всех строк
-                        push cx                         ;
-                        push di                         ; сохраняем cx и di(другие значения внутри след цикла)
+                    ColorLStairs:                   ; cycle for coloring all the lines
+                        push cx                     ;
+                        push di                     ; save di and cx
 
-                        mov cx, dx                      ; cx = dx
+                        mov cx, dx                  ; cx = dx
 
-                        ColorLLine:                     ; цикл для закрашивания одной строки
-                            mov ah, EAR_COLOR           ; ah = EAR_COLOR
-                            stosw                       ; es:[di] = ax, di += 2
+                        ColorLLine:                 ; cycle for coloring one line
+                            mov ah, EAR_COLOR       ; ah = EAR_COLOR
+                            stosw                   ; es:[di] = ax, di += 2
                         loop ColorLLine
 
                         pop di
-                        pop cx                          ; возвращаем cx и di
+                        pop cx                      ; restore cx and di
 
-                        inc dx                          ; dx += 1
-                        add di, SCREEN_LEN              ; di += SCREEN_LEN
+                        inc dx                      ; dx += 1
+                        add di, SCREEN_LEN          ; di += SCREEN_LEN
 
                     loop ColorLStairs
 
-                    push bx                             ; возращаем адрес возврата в стек
+                    mov di, lu_corner               ; di = lu_corner
+                    add di, SCREEN_LEN * 2 + 2      ; di = lu_corner + SCREEN_LEN * 2 + 2
+
+                    mov cx, ear_size                ; cx = ear_size
+                    dec cx                          ; cx = ear_size - 1
+                    xor dx, dx                      ; dx = 0
+                    inc dx                          ; dx = 1
+
+                    ColorLStairsInBuff:             ; cycle for coloring all the lines in buffer
+                        push cx                     ;
+                        push di                     ; save di and cx
+
+                        mov cx, dx                  ; cx = dx
+                        mov ah, EAR_COLOR           ; ah = EAR_COLOR
+
+                        ColorLLineInBuff:           ; cycle for coloring one line in buffer
+                            mov cs:draw_buffer[di], ax
+                            add di, 2
+                        loop ColorLLineInBuff
+
+                        pop di
+                        pop cx                      ; restore cx and di
+
+                        inc dx                      ; dx += 1
+                        add di, SCREEN_LEN          ; di += SCREEN_LEN
+
+                    loop ColorLStairsInBuff
+
+                    push bx                         ; restore return address
                     ret
                     endp
 
@@ -529,37 +496,65 @@ ColorLeftEar        proc
 
 ColorRightEar       proc
 
-                    pop bx                              ; сохраняем адрес возврата
+                    pop bx                          ; save return address
 
-                    mov di, ru_corner                   ; di = ru_corner
-                    add di, SCREEN_LEN * 2 - 2          ; di = ru_corner + SCREEN_LEN * 2 - 2
+                    mov di, ru_corner               ; di = ru_corner
+                    add di, SCREEN_LEN * 2 - 2      ; di = ru_corner + SCREEN_LEN * 2 - 2
 
-                    mov cx, ear_size                    ; cx = ear_size
-                    dec cx                              ; cx = ear_size - 1
-                    xor dx, dx                          ; dx = 0
-                    inc dx                              ; dx = 1
+                    mov cx, ear_size                ; cx = ear_size
+                    dec cx                          ; cx = ear_size - 1
+                    xor dx, dx                      ; dx = 0
+                    inc dx                          ; dx = 1
 
-                    ColorRStairs:                       ; цикл для закрашивания всех строк
-                        push cx                         ;
-                        push di                         ; сохраняем cx и di(другие значения внутри след цикла)
+                    ColorRStairs:                   ; cycle for coloring all of the lines
+                        push cx                     ;
+                        push di                     ; save cx and di
 
-                        mov cx, dx                      ; cx = dx
+                        mov cx, dx                  ; cx = dx
 
-                        ColorRLine:                     ; цикл для закрашивания одной строки
-                            mov ah, EAR_COLOR           ; ah = EAR_COLOR
-                            stosw                       ; es:[di] = ax, di += 2
-                            sub di, 4                   ; di -= 4
+                        ColorRLine:                 ; cycle for coloring one line
+                            mov ah, EAR_COLOR       ; ah = EAR_COLOR
+                            stosw                   ; es:[di] = ax, di += 2
+                            sub di, 4               ; di -= 4
                         loop ColorRLine
 
-                        pop di                          ;
-                        pop cx                          ; возвращаем cx и di
+                        pop di                      ;
+                        pop cx                      ; restore cx and di
 
-                        inc dx                          ; dx += 1
-                        add di, SCREEN_LEN              ; di += SCREEN_LEN
+                        inc dx                      ; dx += 1
+                        add di, SCREEN_LEN          ; di += SCREEN_LEN
 
                     loop ColorRStairs
 
-                    push bx                             ; возвращаем адрес возврата в стек
+                    mov di, ru_corner               ; di = ru_corner
+                    add di, SCREEN_LEN * 2 - 2      ; di = ru_corner + SCREEN_LEN * 2 - 2
+
+                    mov cx, ear_size                ; cx = ear_size
+                    dec cx                          ; cx = ear_size - 1
+                    xor dx, dx                      ; dx = 0
+                    inc dx                          ; dx = 1
+
+                    ColorRStairsInBuff:             ; cycle for coloring all of the lines in buffer
+                        push cx                     ;
+                        push di                     ; save cx and di
+
+                        mov cx, dx                  ; cx = dx
+                        mov ah, EAR_COLOR           ; ah = EAR_COLOR
+
+                        ColorRLineInBuff:           ; cycle for coloring one line in buffer
+                            mov cs:draw_buffer[di], ax
+                            sub di, 2
+                        loop ColorRLineInBuff
+
+                        pop di                      ;
+                        pop cx                      ; restore cx and di
+
+                        inc dx                      ; dx += 1
+                        add di, SCREEN_LEN          ; di += SCREEN_LEN
+
+                    loop ColorRStairsInBuff
+
+                    push bx                         ; restore return address
                     ret
                     endp
 
@@ -576,43 +571,56 @@ ColorRightEar       proc
 
 ColorInsides        proc
 
-                    pop bx                              ; сохраняем адрес возврата
+                    pop bx                          ; save return address
 
-                    mov di, ear_size                    ; di = ear_size
-                    mov ax, SCREEN_LEN                  ; ax = SCREEN_LEN
-                    xor dx, dx                          ; dx = 0
-                    mul di                              ; ax = SCREEN_LEN * ear_size
-                    mov di, ax                          ; di = SCREEN_LEN * ear_size
-                    add di, lu_corner                   ; di = SCREEN_LEN * ear_size + lu_corner
-                    add di, SCREEN_LEN                  ; di = SCREEN_LEN * (ear_size + 1) + lu_corner
-                    inc di                              ;
-                    inc di                              ; di = SCREEN_LEN * (ear_size + 1) + lu_corner + 2
-
-                    mov cx, y_hex_len                   ; cx = y_hex_len
-                    sub cx, ear_size                    ; cx = y_hex_len - ear_size
-                    dec cx                              ; cx = y_hex_len - ear_size - 1
-                    xor ax, ax                          ; ax = 0
+                    mov di, 05D2h                   ; start address for coloring
+                    mov cx, 000Fh                   ; num of rows to color
+                    xor ax, ax                      ; ax = 0
 
                     ColorRow:
-                        push di
+                        push di                     ; save di and cx
                         push cx
 
-                        mov cx, x_hex_len               ; cx = x_hex_len
-                        dec cx                          ; cx = x_hex_len - 1
+                        mov cx, x_hex_len           ; cx = x_hex_len
+                        dec cx                      ; cx = x_hex_len - 1
+                        mov ah, COLOR               ; ah = COLOR
 
                         ColorSym:
-                            mov ah, COLOR               ; ah = COLOR
-                            stosw                       ; es:[di] = ax, di += 2
+                            stosw                   ; es:[di] = ax, di += 2
                         loop ColorSym
 
-                        pop cx
+                        pop cx                      ; restore cx and di
                         pop di
 
-                        add di, SCREEN_LEN              ; di += SCREEN_LEN
+                        add di, SCREEN_LEN          ; di += SCREEN_LEN
 
                     loop ColorRow
 
-                    push bx                             ; возвращаем адрес возврата в стек
+                    mov di, 05D2h                   ; start address for coloring
+                    mov cx, 000Fh                   ; num of rows to color
+                    xor ax, ax                      ; ax = 0
+
+                    ColorRowInBuff:
+                        push di                     ; save di and cx
+                        push cx
+
+                        mov cx, x_hex_len           ; cx = x_hex_len
+                        dec cx                      ; cx = x_hex_len - 1
+                        mov ah, COLOR               ; ah = COLOR
+
+                        ColorSymInBuff:
+                            mov cs:draw_buffer[di], ax
+                            add di, 2
+                        loop ColorSymInBuff
+
+                        pop cx                      ; restore cx and di
+                        pop di
+
+                        add di, SCREEN_LEN          ; di += SCREEN_LEN
+
+                    loop ColorRowInBuff
+
+                    push bx                         ; restore return address
                     ret
                     endp
 
@@ -631,13 +639,21 @@ ColorInsides        proc
 
 PrintUpperRow           proc
 
-                        mov di, 0538h
-                        mov cx, 0019h
+                        mov di, 0538h               ; start adress for printing
+                        mov cx, 0019h               ; length of row(less than lower one because of ears)
+                        mov ah, COLOR               ; ah = COLOR
 
                         UpperRow:
-                            mov ah, COLOR               ; ah = COLOR
-                            stosw                       ; es:[di] = ax, di += 2
+                            stosw                   ; es:[di] = ax, di += 2
                         loop UpperRow
+
+                        mov di, 0538h               ; the same for draw_buffer
+                        mov cx, 0019h
+
+                        UpperRowInBuf:
+                            mov cs:draw_buffer[di], ax
+                            add di, 2
+                        loop UpperRowInBuf
 
                         ret
                         endp
@@ -657,15 +673,22 @@ PrintUpperRow           proc
 
 PrintLeftColumn         proc
 
-                        mov cx, y_hex_len
-                        mov di, lu_corner
-
-                        mov ah, COLOR
+                        mov cx, y_hex_len           ; cx = y_hex_len
+                        mov di, lu_corner           ; di = lu_corner
+                        mov ah, COLOR               ; ah = COLOR
 
                         LeftColumn:
-                            stosw
-                            add di, SCREEN_LEN - 2d     ; +2d включается в stosw
+                            stosw                   ; es:[di] = ax, di += 2
+                            add di, SCREEN_LEN - 2d ; +2d included in stosw
                         loop LeftColumn
+
+                        mov cx, y_hex_len           ; the same for draw_buffer
+                        mov di, lu_corner
+
+                        LeftColumnInBuff:
+                            mov cs:draw_buffer[di], ax
+                            add di, SCREEN_LEN
+                        loop LeftColumnInBuff
 
                         ret
                         endp
@@ -685,15 +708,22 @@ PrintLeftColumn         proc
 
 PrintRightColumn        proc
 
-                        mov cx, y_hex_len
-                        mov di, ru_corner
-
-                        mov ah, COLOR                   ; ah = COLOR
+                        mov cx, y_hex_len           ; cx = y_hex_len
+                        mov di, ru_corner           ; di = ru_corner
+                        mov ah, COLOR               ; ah = COLOR
 
                         RightColumn:
-                            stosw                       ; es:[di] = ax, di += 2
-                            add di, SCREEN_LEN  - 2d    ; увеличиваем di на 160d (переход на следующую строку)
+                            stosw                   ; es:[di] = ax, di += 2
+                            add di, SCREEN_LEN - 2d ; +2 included in stosw
                         loop RightColumn
+
+                        mov cx, y_hex_len           ; the same for draw_buffer
+                        mov di, ru_corner
+
+                        RightColumnInBuff:
+                            mov cs:draw_buffer[di], ax
+                            add di, SCREEN_LEN
+                        loop RightColumnInBuff
 
                         ret
                         endp
@@ -714,12 +744,20 @@ PrintRightColumn        proc
 PrintLowerRow           proc
 
                         mov ah, COLOR               ; ah = COLOR
-                        mov di, ll_corner
-                        mov cx, x_hex_len
+                        mov di, ll_corner           ; di = ll_corner
+                        mov cx, x_hex_len           ; cx = x_hex_len
 
                         LowerRow:
-                            stosw                       ; es:[di] = ax, di += 2
+                            stosw                   ; es:[di] = ax, di += 2
                         loop LowerRow
+
+                        mov di, ll_corner           ; the same for draw_buffer
+                        mov cx, x_hex_len
+
+                        LowerRowInBuff:
+                            mov cs:draw_buffer[di], ax
+                            add di, 2
+                        loop LowerRowInBuff
 
                         ret
                         endp
@@ -737,14 +775,22 @@ PrintLowerRow           proc
 
 PrintLeftEar            proc
 
-                        mov di, lu_corner               ; di = lu_corner
-                        mov cx, ear_size                ; cx = ear_size
-                        mov ah, COLOR                   ; ah = COLOR
+                        mov di, lu_corner           ; di = lu_corner
+                        mov cx, ear_size            ; cx = ear_size
+                        mov ah, COLOR               ; ah = COLOR
 
                         LeftEar:
-                            stosw                       ; es:[di] = ax, di += 2
-                            add di, SCREEN_LEN          ; di += SCREEN_LEN
+                            stosw                   ; es:[di] = ax, di += 2
+                            add di, SCREEN_LEN      ; di += SCREEN_LEN
                         loop LeftEar
+
+                        mov di, lu_corner           ; di = lu_corner
+                        mov cx, ear_size            ; cx = ear_size
+
+                        LeftEarInBuff:
+                            mov cs:draw_buffer[di], ax
+                            add di, SCREEN_LEN + 2d
+                        loop LeftEarInBuff
 
                         ret
                         endp
@@ -762,14 +808,22 @@ PrintLeftEar            proc
 
 PrintRightEar           proc
 
-                        mov di, ru_corner               ; di = lu_corner
-                        mov cx, ear_size                ; cx = ear_size
-                        mov ah, COLOR                   ; ah = COLOR
+                        mov di, ru_corner           ; di = lu_corner
+                        mov cx, ear_size            ; cx = ear_size
+                        mov ah, COLOR               ; ah = COLOR
 
                         RightEar:
-                            stosw                       ; es:[di] = ax, di += 2
-                            add di, SCREEN_LEN - 4d     ; di += (SCREEN_LEN - 4d)
+                            stosw                   ; es:[di] = ax, di += 2
+                            add di, SCREEN_LEN - 4d ; di += (SCREEN_LEN - 4d)
                         loop RightEar
+
+                        mov di, ru_corner           ; di = lu_corner
+                        mov cx, ear_size            ; cx = ear_size
+
+                        RightEarInBuff:
+                            mov cs:draw_buffer[di], ax
+                            add di, SCREEN_LEN - 2d
+                        loop RightEarInBuff
 
                         ret
                         endp
@@ -789,15 +843,15 @@ SaveBackground          proc
 
                         push ax si es cx
 
-                        mov cx, 2000d            ; cx = 2000d
+                        mov cx, SCREEN_SIZE         ; cx = 2000d
                         push START_MEMORY
                         pop es
-                        xor si, si               ; si = 0
+                        xor si, si                  ; si = 0
 
                         SaveWord:
-                            mov ax, es:[si]
-                            mov cs:save_buffer[si], ax
-                            add si, 2
+                            mov ax, es:[si]             ; ax = es:[si]
+                            mov cs:save_buffer[si], ax  ; cs:save_buffer[si] = es:[si]
+                            add si, 2                   ; si += 2
                         loop SaveWord
 
                         pop cx es si ax
@@ -805,57 +859,88 @@ SaveBackground          proc
                         ret
                         endp
 
+;===================================================
+; FillDrawBuffer
+;
+; Puts VRAM image to draw_buffer
+;
+; Expected: -
+; Exit: save_buffer
+; Destroys: -
+;
+;===================================================
 
-flag    dw 0
-save_buffer dw 2000d DUP(0) ;
-draw_buffer dw 2000d DUP(0) ; not used for now
-regs_line   db 'ipbxaxcxdxsidibpspdsessscs$'
+FillDrawBuffer          proc
+
+                        push ax si es cx
+
+                        mov cx, SCREEN_SIZE         ; cx = 2000d
+                        push START_MEMORY
+                        pop es
+                        xor si, si                  ; si = 0
+
+                        SaveDrawWord:
+                            mov ax, es:[si]             ; ax = es:[si]
+                            mov cs:draw_buffer[si], ax  ; cs:draw_buffer[si] = es:[si]
+                            add si, 2                   ; si += 2
+                        loop SaveDrawWord
+
+                        pop cx es si ax
+
+                        ret
+                        endp
+
+
+flag        dw 0
+save_buffer dw SCREEN_SIZE DUP(0) ;
+draw_buffer dw SCREEN_SIZE DUP(0) ;
+regs_line   db 'bxipaxcxdxsidibpspdsessscs'
 
 EOP:
 Main:
-            mov ax, 3509h                   ;
-            int 21h                         ;
-            mov OldSeg, bx                  ;
-            mov bx, es                      ;
-            mov OldOff, bx                  ; сохраняем адрес старого обработчика(int 09h)
+            mov ax, 3509h                           ; to call 09h func of int 21h
+            int 21h                                 ;
+            mov OldSeg, bx                          ; save standart int 09h segment
+            mov bx, es                              ; bx = es
+            mov OldOff, bx                          ; save standart int 09h offset
 
-            push 0                          ;
-            pop es                          ; es = 0
+            push 0                                  ;
+            pop es                                  ; es = 0
 
-            cli                             ;
-            mov bx, 09h * 4                 ;
-            mov es:[bx], offset KeyboardInt ;
-            mov ax, cs                      ;
-            mov es:[bx+2], ax               ;
-            sti                             ; записываем свой адрес(KeyboardInt) на место адреса
-                                            ; старого обработчика
+            cli                                     ;
+            mov bx, 09h * 4                         ; bx = 09h * 4
+            mov es:[bx], offset KeyboardInt         ;
+            mov ax, cs                              ;
+            mov es:[bx+2], ax                       ;
+            sti                                     ; change int 09h address to KeyboardInt function
 
-            mov ax, 3508h                   ;
-            int 21h                         ;
-            mov OldTimerSeg, bx             ;
-            mov bx, es                      ;
-            mov OldTimerOff, bx             ; сохраняем адрес старого обработчика(int 08h)
 
-            ;int 09h ; для отладки
+            mov ax, 3508h                           ; the same for int 08h
+            int 21h
+            mov OldTimerSeg, bx
+            mov bx, es
+            mov OldTimerOff, bx
 
-            push 0                          ;
-            pop es                          ; es = 0
+            push 0
+            pop es                                  ; es = 0
 
-            cli                             ;
-            mov bx, 08h * 4                 ;
-            mov es:[bx], offset TimerInt    ;
-            mov ax, cs                      ;
-            mov es:[bx+2], ax               ;
-            sti                             ; записываем свой адрес(TimerInt) на место адреса
-                                            ; старого обработчика
+            cli
+            mov bx, 08h * 4
+            mov es:[bx], offset TimerInt
+            mov ax, cs
+            mov es:[bx+2], ax
+            sti
 
-            call SaveBackground             ;
-            ;int 08h ; для отладки!
 
-            mov ax, 3100h                   ;
-            mov dx, offset EOP              ; выделяем память для сохранения
-            shr dx, 4                       ; резидентного кода
-            inc dx                          ;
-            int 21h                         ;
+            call SaveBackground
+            call Frame
+            call FillDrawBuffer
+            call CloseFrame
+
+            mov ax, 3100h
+            mov dx, offset EOP                      ; allocate memory to save resident programm
+            shr dx, 4                               ; dx /= 4
+            inc dx                                  ; dx += 1
+            int 21h
 
 end         Start
